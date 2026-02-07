@@ -10,10 +10,16 @@
 *   **Google Drive**: 証憑（請求書PDF）のファイルストレージ。
 *   **Gmail/MailApp**: 通知および請求書送付のメールゲートウェイ。
 
+### 採用技術スタック
+*   **Frontend/Backend Framework**: **Next.js** (App Router)
+*   **Database & Auth**: **Supabase** (PostgreSQL, Supabase Auth)
+*   **Hosting**: **Vercel**
+*   **Styling**: **Tailwind CSS**
+
 ### 認証方式の現状と移行方針
 *   **現状**: メールアドレスの一致による簡易チェック（パスワードレス、セキュリティ低）。
 *   **機能要件**: ユーザー（スタッフ）の識別、ロール（営業/作業担当）による機能制限。
-*   **Webアプリ移行後**: IDプロバイダ（Auth0, Cognito, Firebase Auth 等）またはアプリ内認証基盤（NextAuth.js等）を導入し、セキュアなセッション管理を行う。
+*   **Webアプリ移行後**: **Supabase Auth** を採用。Email/Password認証またはMagic Link認証を使用し、Row Level Security (RLS) でデータアクセスを制御する。
 
 ## 2. 主要ユースケース
 
@@ -42,9 +48,10 @@
 *   **成功条件**: A/B両方のPDFがストレージに保存され、メールが送信され、DBに請求記録が残ること。
 *   **失敗条件**: 取引先重複、明細未選択、ストレージ保存失敗、メール送信エラー。
 
-## 3. データモデル草案 (RDB)
+## 3. データモデル草案 (Supabase/PostgreSQL)
 
-Spreadsheetのシート構造を正規化し、RDBスキーマへ落とし込みます。
+Spreadsheetのシート構造を正規化し、Supabase上のPostgreSQLスキーマへ落とし込みます。
+RLS (Row Level Security) により、ログインユーザーに応じたアクセス制御を行います。
 ※ `CaseDetails` はGAS仕様書に明示ありませんが、分割請求機能（明細配分）のため必須とみなし定義します。
 
 ### Tables
@@ -171,7 +178,7 @@ RESTful API を基本とします。
 ## 6. 非機能要件の初期整理
 
 *   **可用性**:
-    *   業務時間内(9:00-18:00)の稼働重視。クラウドFaaS/コンテナ(Cloud Run/Lambda/Vercel)でのオートスケール推奨。
+    *   **Vercel** (Frontend/API) + **Supabase** (DB) の構成により、高い可用性とスケーラビリティを確保。
 *   **監査・ログ**:
     *   「誰が」「いつ」「作業完了/請求発行」したかの操作ログを保存。
     *   メール送信ログ（送信日時、宛先、成否）。
