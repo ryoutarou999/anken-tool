@@ -15,6 +15,9 @@
 *   **Database & Auth**: **Supabase** (PostgreSQL, Supabase Auth)
 *   **Hosting**: **Vercel**
 *   **Styling**: **Tailwind CSS**
+*   **UI Components**: **shadcn/ui** (Radix UI base)
+*   **Icons**: **Lucide React**
+*   **Layout**: **react-resizable-panels**
 
 ### 認証方式の現状と移行方針
 *   **現状**: メールアドレスの一致による簡易チェック（パスワードレス、セキュリティ低）。
@@ -48,80 +51,108 @@
 *   **成功条件**: A/B両方のPDFがストレージに保存され、メールが送信され、DBに請求記録が残ること。
 *   **失敗条件**: 取引先重複、明細未選択、ストレージ保存失敗、メール送信エラー。
 
-## 3. データモデル草案 (Supabase/PostgreSQL)
+## 3. UI/UXデザインとレイアウト策定
 
-Spreadsheetのシート構造を正規化し、Supabase上のPostgreSQLスキーマへ落とし込みます。
+直近の実装協議により、以下の3ペイン構成を採用します。デスクトップでの作業効率を重視した「アプリライク」な操作感を目指します。
+
+### 3.1. 画面レイアウト (3-Pane Resizable Layout)
+`react-resizable-panels` を使用し、ユーザーが自由に領域幅を調整可能な構成とします。
+
+1.  **左サイドバー (Navigation)**
+    *   **役割**: アプリケーション全体のナビゲーション。
+    *   **項目**: ダッシュボード、案件一覧、作業完了報告、請求書管理、ユーザー設定。
+    *   **挙動**: 幅調整可能 (Min 15% - Max 30%)、折りたたみ可能。
+2.  **メインコンテンツ (Center Main)**
+    *   **役割**: 各業務機能の操作画面（一覧、フォーム、プレビュー等）。
+    *   **機能**: 右側アシスタントパネルの表示/非表示トグルボタンを配置。
+    *   **挙動**: 可変幅 (Min 30%)。
+3.  **右アシスタントパネル (Assistant Panel)**
+    *   **役割**: AIアシスタント、ヘルプ、またはコンテキストに応じたサブ情報の表示。
+    *   **挙動**: 幅調整可能 (Min 15% - Max 40%)、デフォルト表示/非表示切り替え可能。
+    *   **実装**: `AssistPanel` コンポーネントとして分離。
+
+### 3.2. デザインシステム
+*   **ベーステーマ**: `shadcn/ui` を採用し、モダンで一貫性のあるデザインを短期間で構築。
+*   **アイコン**: `lucide-react` による統一されたアイコンセット。
+*   **インタラクション**: 即時応答性を重視し、Client Components を適切に配置してリッチなUIを実現。
+
+## 4. データモデル草案 (Supabase/PostgreSQL)
+
+Spreadsheetのシート構造を正規化し、Supabase上のPostgreSQLスキーマ (`schema.sql`) として実装済みです。
 RLS (Row Level Security) により、ログインユーザーに応じたアクセス制御を行います。
-※ `CaseDetails` はGAS仕様書に明示ありませんが、分割請求機能（明細配分）のため必須とみなし定義します。
+※ `CaseDetails` は分割請求機能（明細配分）のため必須です。
+※ UUID (`uuid-ossp`) をプライマリキーとして採用。
 
 ### Tables
 
 #### `clients` (取引先マスタ)
 | Column | Type | Key | Note |
 | :--- | :--- | :--- | :--- |
-| `id` | INT/UUID | PK | `clientId` |
-| `name` | VARCHAR | | 取引先名 |
-| `email` | VARCHAR | | 請求書送付先 |
+| `id` | UUID | PK | `default uuid_generate_v4()` |
+| `name` | TEXT | | 取引先名 |
+| `email` | TEXT | | 請求書送付先 |
 | `address` | TEXT | | 住所 |
-| `created_at` | DATETIME | | |
+| `created_at` | TIMESTAMP | | |
 
 #### `staffs` (スタッフマスタ)
 | Column | Type | Key | Note |
 | :--- | :--- | :--- | :--- |
-| `id` | INT/UUID | PK | `staffId` |
-| `name` | VARCHAR | | 氏名 |
-| `email` | VARCHAR | UQ | ログインID兼用 |
-| `notification_email` | VARCHAR | | 通知用 |
-| `role` | VARCHAR | | 役割 (営業/作業等) |
+| `id` | UUID | PK | `default uuid_generate_v4()` |
+| `name` | TEXT | | 氏名 |
+| `email` | TEXT | UQ | ログインID兼用 |
+| `notification_email` | TEXT | | 通知用 |
+| `role` | TEXT | | Check: 'admin', 'sales', 'worker' |
 
 #### `cases` (案件管理)
 | Column | Type | Key | Note |
 | :--- | :--- | :--- | :--- |
-| `id` | INT/UUID | PK | `caseId` |
-| `client_id` | INT/UUID | FK | -> clients.id |
-| `staff_id` | INT/UUID | FK | -> staffs.id (作業担当) |
-| `name` | VARCHAR | | 案件名 |
-| `status` | VARCHAR | | 自動判定結果キャッシュ |
+| `id` | UUID | PK | `default uuid_generate_v4()` |
+| `client_id` | UUID | FK | -> clients.id |
+| `staff_id` | UUID | FK | -> staffs.id |
+| `name` | TEXT | | 案件名 |
+| `status` | TEXT | | Default: '受注前' |
 | `order_date` | DATE | | 受注日 |
 | `scheduled_completion_date` | DATE | | 完了予定日 |
 | `work_completion_date` | DATE | | 作業完了日 |
 | `invoice_issue_date` | DATE | | 請求書発行日 |
 | `lost_date` | DATE | | 失注日 |
 | `memo` | TEXT | | |
+| `created_at` | TIMESTAMP | | |
+| `updated_at` | TIMESTAMP | | |
 
-#### `case_details` (案件明細 - 推定)
+#### `case_details` (案件明細)
 *案件:明細 = 1:N*
 | Column | Type | Key | Note |
 | :--- | :--- | :--- | :--- |
-| `id` | INT/UUID | PK | |
-| `case_id` | INT/UUID | FK | -> cases.id |
-| `item_name` | VARCHAR | | 品目名 |
-| `unit_price` | DECIMAL | | 単価 |
-| `quantity` | DECIMAL | | 数量 |
-| `amount` | DECIMAL | | 金額 |
+| `id` | UUID | PK | `default uuid_generate_v4()` |
+| `case_id` | UUID | FK | -> cases.id (Cascade Delete) |
+| `item_name` | TEXT | | 品目名 |
+| `unit_price` | NUMERIC | | Default: 0 |
+| `quantity` | NUMERIC | | Default: 1 |
+| `amount` | NUMERIC | | Generated (unit_price * quantity) |
 
 #### `invoices` (請求)
 | Column | Type | Key | Note |
 | :--- | :--- | :--- | :--- |
-| `id` | INT/UUID | PK | |
-| `invoice_no` | VARCHAR | UQ | 請求書番号 |
-| `client_id` | INT/UUID | FK | 請求先 |
-| `issue_date` | DATE | | 請求日 |
-| `total_amount` | DECIMAL | | 請求総額 |
-| `pdf_url` | VARCHAR | | ストレージURL |
-| `payment_status` | VARCHAR | | 入金ステータス |
-| `source_case_ids` | JSON | | 元案件ID配列 (検索用) |
+| `id` | UUID | PK | `default uuid_generate_v4()` |
+| `invoice_no` | TEXT | UQ | 請求書番号 |
+| `client_id` | UUID | FK | 請求先 |
+| `issue_date` | DATE | | Default: current_date |
+| `total_amount` | NUMERIC | | Default: 0 |
+| `pdf_url` | TEXT | | ストレージURL |
+| `payment_status` | TEXT | | Default: '未入金' |
+| `source_case_ids` | JSONB | | 元案件ID配列 |
 
 #### `invoice_items` (請求明細)
 *請求書と案件明細の紐付け中間テーブル*
 | Column | Type | Key | Note |
 | :--- | :--- | :--- | :--- |
-| `id` | INT/UUID | PK | |
-| `invoice_id` | INT/UUID | FK | -> invoices.id |
-| `case_detail_id` | INT/UUID | FK | -> case_details.id |
-| `amount` | DECIMAL | | 請求時固定金額 |
+| `id` | UUID | PK | `default uuid_generate_v4()` |
+| `invoice_id` | UUID | FK | -> invoices.id (Cascade Delete) |
+| `case_detail_id` | UUID | FK | -> case_details.id |
+| `amount` | NUMERIC | | 請求時固定金額 |
 
-## 4. API設計草案
+## 5. API設計草案
 
 RESTful API を基本とします。
 
@@ -149,7 +180,7 @@ RESTful API を基本とします。
 *   `GET /api/clients`: 取引先一覧
 *   `GET /api/staffs`: スタッフ一覧
 
-## 5. バリデーション・業務ルール一覧
+## 6. バリデーション・業務ルール一覧
 
 ### 共通
 *   **日付形式**: ISO 8601 (YYYY-MM-DD) 準拠。
@@ -175,7 +206,7 @@ RESTful API を基本とします。
     4.  `order_date` あり → **作業中** (完了予定日が過ぎていれば「遅延」扱いの検討も)
     5.  その他 → **受注前/見込み**
 
-## 6. 非機能要件の初期整理
+## 7. 非機能要件の初期整理
 
 *   **可用性**:
     *   **Vercel** (Frontend/API) + **Supabase** (DB) の構成により、高い可用性とスケーラビリティを確保。
@@ -189,7 +220,7 @@ RESTful API を基本とします。
     *   PDF生成とメール送信は時間がかかるため、APIレスポンスと切り離して非同期実行（リクエスト受領→即レスポンス→バックグラウンド処理）を推奨。
     *   特に「分割請求送信」はトランザクションが重いため、Worker利用を検討。
 
-## 7. 移行計画の論点
+## 8. 移行計画の論点
 
 *   **データ移行 (Migration)**
     *   SpreadsheetデータをCSVエクスポートし、RDBへインポートするスクリプトが必要。
@@ -207,7 +238,7 @@ RESTful API を基本とします。
     *   GASでは比較的ルーズだったが、Webアプリでは「PDF保存」「DBコミット」「メール送信」の原子性（Atomicity）が必要。
     *   メール送信失敗時にDBをロールバックするか、リトライ可能な構成(Sagaパターン)にするか。
 
-## 8. テスト観点リスト
+## 9. テスト観点リスト
 
 ### 機能テスト
 *   [ ] **作業完了報告**:
